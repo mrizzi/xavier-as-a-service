@@ -1,0 +1,179 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: xavier-analytics
+
+parameters:
+  - name: APPLICATION_NAME
+    value: xavier-analytics
+    required: true
+
+objects:
+  - apiVersion: apps.openshift.io/v1
+    kind: DeploymentConfig
+    metadata:
+      annotations:
+        template.alpha.openshift.io/wait-for-ready: 'true'
+      creationTimestamp: null
+      generation: 1
+      labels:
+        app: "${APPLICATION_NAME}"
+        application: "${APPLICATION_NAME}"
+        service: ${APPLICATION_NAME}-kieserver
+      name: ${APPLICATION_NAME}-kieserver
+    spec:
+      replicas: 1
+      revisionHistoryLimit: 10
+      selector:
+        deploymentConfig: ${APPLICATION_NAME}-kieserver
+      strategy:
+        activeDeadlineSeconds: 21600
+        recreateParams:
+          timeoutSeconds: 600
+        resources: {}
+        type: Recreate
+      template:
+        metadata:
+          creationTimestamp: null
+          labels:
+            application: "${APPLICATION_NAME}"
+            deploymentConfig: ${APPLICATION_NAME}-kieserver
+            service: ${APPLICATION_NAME}-kieserver
+          name: ${APPLICATION_NAME}-kieserver
+        spec:
+          containers:
+            - env:
+                - name: KIE_ADMIN_USER
+                  value: kie-admin-user
+                - name: KIE_ADMIN_PWD
+                  value: kie-admin-password
+                - name: KIE_SERVER_MODE
+                  value: DEVELOPMENT
+                - name: KIE_MBEANS
+                  value: enabled
+                - name: DROOLS_SERVER_FILTER_CLASSES
+                  value: 'true'
+                - name: KIE_SERVER_BYPASS_AUTH_USER
+                  value: 'false'
+                - name: KIE_SERVER_ID
+                  value: ${APPLICATION_NAME}-kieserver
+                - name: KIE_SERVER_ROUTE_NAME
+                  value: ${APPLICATION_NAME}-kieserver
+                - name: KIE_SERVER_USE_SECURE_ROUTE_NAME
+                  value: 'false'
+                - name: KIE_SERVER_USER
+                  value: executionUser
+                - name: KIE_SERVER_PWD
+                  value: kie-server-password
+              image: quay.io/mrizzi/xavier-analytics:dev
+              imagePullPolicy: Always
+              livenessProbe:
+                exec:
+                  command:
+                    - "/bin/bash"
+                    - "-c"
+                    - "curl --fail --silent -u $KIE_ADMIN_USER:$KIE_ADMIN_PWD http://localhost:8080/services/rest/server/healthcheck"
+                failureThreshold: 3
+                initialDelaySeconds: 180
+                periodSeconds: 15
+                successThreshold: 1
+                timeoutSeconds: 2
+              name: ${APPLICATION_NAME}-kieserver
+              ports:
+                - containerPort: 8778
+                  name: jolokia
+                  protocol: TCP
+                - containerPort: 8080
+                  name: http
+                  protocol: TCP
+                - containerPort: 8443
+                  name: https
+                  protocol: TCP
+              readinessProbe:
+                exec:
+                  command:
+                    - "/bin/bash"
+                    - "-c"
+                    - "curl --fail --silent -u $KIE_ADMIN_USER:$KIE_ADMIN_PWD http://localhost:8080/services/rest/server/readycheck"
+                failureThreshold: 6
+                initialDelaySeconds: 60
+                periodSeconds: 30
+                successThreshold: 1
+                timeoutSeconds: 2
+              resources:
+                limits:
+                  cpu: '1'
+                  memory: 2Gi
+                requests:
+                  cpu: 400m
+                  memory: 2Gi
+              terminationMessagePath: /dev/termination-log
+              terminationMessagePolicy: File
+          dnsPolicy: ClusterFirst
+          restartPolicy: Always
+          schedulerName: default-scheduler
+          securityContext: {}
+          #serviceAccount: ${APPLICATION_NAME}-kieserver
+          #serviceAccountName: ${APPLICATION_NAME}-kieserver
+          terminationGracePeriodSeconds: 60
+      test: false
+      triggers:
+        - type: ConfigChange
+    status:
+      availableReplicas: 0
+      latestVersion: 0
+      observedGeneration: 0
+      replicas: 0
+      unavailableReplicas: 0
+      updatedReplicas: 0
+  - kind: Service
+    apiVersion: v1
+    spec:
+      ports:
+        - name: http
+          port: 8080
+          targetPort: 8080
+        - name: https
+          port: 8443
+          targetPort: 8443
+      selector:
+        deploymentConfig: "${APPLICATION_NAME}-kieserver"
+    metadata:
+      name: "${APPLICATION_NAME}-kieserver"
+      labels:
+        application: "${APPLICATION_NAME}"
+        service: "${APPLICATION_NAME}-kieserver"
+      annotations:
+        description: All the KIE server web server's ports.
+  - kind: Service
+    apiVersion: v1
+    spec:
+      clusterIP: "None"
+      ports:
+        - name: "ping"
+          port: 8888
+          targetPort: 8888
+      selector:
+        deploymentConfig: "${APPLICATION_NAME}-kieserver"
+    metadata:
+      name: "${APPLICATION_NAME}-kieserver-ping"
+      labels:
+        application: "${APPLICATION_NAME}"
+        service: "${APPLICATION_NAME}-kieserver"
+      annotations:
+        service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+        description: "The JGroups ping port for clustering."
+  - apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      labels:
+        application: "${APPLICATION_NAME}"
+        service: "${APPLICATION_NAME}-kieserver"
+      name: ${APPLICATION_NAME}
+    spec:
+      port:
+        targetPort: http
+      to:
+        kind: Service
+        name: "${APPLICATION_NAME}-kieserver"
+      wildcardPolicy: None
